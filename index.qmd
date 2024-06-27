@@ -1,0 +1,238 @@
+---
+title: "Tp4"
+author: "NayelyA.C10561_KhiaraM.C25244"
+format: 
+  dashboard:
+    orientation: rows
+---
+
+```{r}
+#| label: carga_paquetes
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(plotly)
+library(DT)
+library(leaflet)
+library(sf)
+library(ggthemes)
+library(hrbrthemes)
+library(viridisLite)
+```
+
+```{r}
+#| label: carga-datos
+
+especies_reptiles <-
+  st_read("especies-reptiles.csv", 
+             quiet = TRUE)
+
+
+registros_reptiles <-
+  st_read("registros-reptiles.csv", 
+             quiet = TRUE, 
+             options = c(
+      "X_POSSIBLE_NAMES=decimalLongitude", 
+      "Y_POSSIBLE_NAMES=decimalLatitude"))
+
+st_crs(registros_reptiles) <- 4326
+
+regiones_socioeconomicas <- 
+  st_read("regiones-socioeconomicas.gpkg", quiet = TRUE)
+```
+
+# Riqueza por categoria
+
+## Row
+
+```{r}
+registros_union_especies <-
+  especies_reptiles |>
+  left_join(
+    dplyr::select(registros_reptiles, species
+),
+    by = "species" 
+  )
+```
+
+```{r}
+riqueza_especies_reptiles <-
+  registros_union_especies|>
+  st_drop_geometry() |>
+  group_by(iucnRedListCategory) |>
+  summarize(registros_union_especies = n())
+```
+
+```{r}
+#| label: Cantidad-de-especies-por-categoria
+#| title: "Tabla de cantidad de especies por categoria"
+
+riqueza_especies_reptiles |>
+  datatable(
+    colnames = c("Categorias", "Cantidad de registros"),
+    options = list(
+language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json')
+    ))
+```
+
+# Registros de clases
+
+## Row
+
+```{r}
+#| label: clases
+#| title: "Gráfico de barras de la cantidad de registros de presencia de las clases: Squamata, Testudines y Crocodylia"
+
+grafico_ggplot2 <- 
+  registros_reptiles |>
+  group_by(class) |>
+  summarize(n = n()) |>
+  ggplot(aes(
+    x = reorder(class, -n),
+    y = n)) +
+  ggtitle("Cantidad de registros de Squamata, Testudines y Cocodylia") +
+  geom_col() +
+  xlab("Clases") +
+  ylab("Cantidad") +
+  theme_economist()
+
+ggplotly(grafico_ggplot2)
+```
+
+# Mapa coropletas
+
+## Row
+
+```{r}
+#| label: filtro
+
+filtro_iguanidae <- 
+ registros_reptiles |>
+  select(species, genus, family) |>
+  filter(family == "Iguanidae")
+```
+ 
+```{r}
+#| label: union
+
+union_regiones_x_iguanidae <-
+  st_join(
+    x = filtro_iguanidae,
+    y = dplyr::select(regiones_socioeconomicas, region),
+    join = st_within)
+```
+
+```{r}
+#| label: conteo
+
+  riqueza_region_iguanidae <- 
+  union_regiones_x_iguanidae |> 
+  st_drop_geometry() |>
+  group_by(region) |>
+  summarize(union_regiones_x_iguanidae = n_distinct(species, na.rm = TRUE)) 
+```
+
+```{r}
+#| label: union_no_espacial
+
+regiones_union_riqueza <- 
+  left_join(
+    x = regiones_socioeconomicas, 
+    y = riqueza_region_iguanidae,
+    by = "region"
+  ) |>
+  replace_na(list(riqueza_region_iguanidae = 0))
+```
+
+```{r}
+#| label: mapa
+#| title: mapa_riqueza_especies_Iguanidae
+
+colores_riqueza_especies <-
+  colorNumeric(
+    palette = "Reds", 
+    domain = regiones_union_riqueza$union_regiones_x_iguanidae, 
+    na.color = "transparent"
+  ) 
+
+colores_especies <- colorFactor(
+  palette = viridis(length(unique(union_regiones_x_iguanidae$species))),
+  domain = union_regiones_x_iguanidae$species
+)
+
+  leaflet() |>
+  setView(
+    lng = -84.194552,
+    lat = 9.572735,
+    zoom = 7) |>
+  addTiles(group = "Mapa general (OpenStreetMap") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery,
+    group = "Imágenes satelitales (ESRI World Imagery)"
+  ) |>
+    addPolygons(
+    data = regiones_union_riqueza,
+    fillColor = ~ colores_riqueza_especies(regiones_union_riqueza$union_regiones_x_iguanidae),
+    fillOpacity = "black",
+    stroke = TRUE,
+    weight = 1.0,
+    popup = paste(
+      paste("<strong>Region:</strong>", regiones_union_riqueza$region),
+      paste("<strong>Riqueza de especies:</strong>", regiones_union_riqueza$union_regiones_x_iguanidae),
+      sep = "<br/>"
+    ),
+    group = "Riqueza de especies"
+  ) |>
+    addScaleBar(
+      position = "bottomleft",
+      options = scaleBarOptions(imperial = FALSE)
+    ) |>
+    addLegend(
+    position = "bottomleft",
+    pal = colores_riqueza_especies,
+    values = regiones_union_riqueza$union_regiones_x_iguanidae,
+    group = "Riqueza de especies",
+    title = "Riquezas de especies"
+  ) |>
+  addLayersControl(
+    baseGroups = c(
+      "Mapa general (OSM)",
+      "Imágenes satelitales (ESRI World Imagery)"
+    ),
+    overlayGroups = c(
+      "Riqueza de especies",
+      "Regostro de presencia"
+    )
+  )
+```
+
+# Riqueza de especies
+
+## Row 
+
+```{r}
+#| label: barras-riqueza-iguanidae
+#| title: "Gráfico de barras de riqueza de especies de la familia Iguanidae en regiones socioeconómicas"
+
+grafico_ggplot2 <- 
+  regiones_union_riqueza |>
+   group_by(region) |>
+  summarize(n = union_regiones_x_iguanidae) |>
+  ggplot(aes(
+    x = reorder(region, -n),
+    y = n)) +
+  ggtitle("Riqueza de especies de la familia Iguanidae") +
+  geom_col() +
+  xlab("Region") +
+  ylab("Riqueza de especies") +
+  theme_economist()
+
+ggplotly(grafico_ggplot2)
+```
+
+
+
+
+
+
